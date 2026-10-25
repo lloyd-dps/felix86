@@ -228,7 +228,7 @@ int Filesystem::FStatAt64(int fd, const char* filename, struct stat64* host_stat
         VERBOSE("Error while resolving path during fstatat64(%d, %s), error: %s", fd, filename, strerror(fd_path.get_errno()));
         return -fd_path.get_errno();
     }
-    return ::fstatat64(fd_path.fd(), fd_path.path(), host_stat, flags);
+    return libc_result(::fstatat64(fd_path.fd(), fd_path.path(), host_stat, flags));
 }
 
 int Filesystem::StatFs(const char* filename, struct statfs* buf) {
@@ -293,7 +293,7 @@ int Filesystem::ReadlinkAt(int fd, const char* filename, char* buf, int bufsiz) 
 }
 
 int Filesystem::Getcwd(char* buf, size_t size) {
-    int result = syscall(SYS_getcwd, buf, size);
+    int result = libc_result(syscall(SYS_getcwd, buf, size));
 
     if (result > 0) {
         std::string str = buf;
@@ -367,7 +367,7 @@ int Filesystem::Creat(const char* filename, u64 mode) {
         VERBOSE("Error while resolving path during creat(%s), error: %s", filename, strerror(fd_path.get_errno()));
         return -fd_path.get_errno();
     }
-    return ::creat(fd_path.full_path(), mode);
+    return libc_result(::creat(fd_path.full_path(), mode));
 }
 
 int Filesystem::Statx(int fd, const char* filename, int flags, u32 mask, struct statx* statxbuf) {
@@ -489,14 +489,14 @@ ssize_t Filesystem::Listxattr(const char* filename, char* list, size_t size, boo
             VERBOSE("Error while resolving path during listxattr(%s), error: %s", filename, strerror(fd_path.get_errno()));
             return -fd_path.get_errno();
         }
-        return ::listxattr(fd_path.full_path(), list, size);
+        return libc_result(::listxattr(fd_path.full_path(), list, size));
     } else {
         FdPath fd_path = resolve(filename, false);
         if (fd_path.is_error()) {
             VERBOSE("Error while resolving path during llistxattr(%s), error: %s", filename, strerror(fd_path.get_errno()));
             return -fd_path.get_errno();
         }
-        return ::llistxattr(fd_path.full_path(), list, size);
+        return libc_result(::llistxattr(fd_path.full_path(), list, size));
     }
 }
 
@@ -604,7 +604,7 @@ void Filesystem::SetRootfs(const std::filesystem::path& path) {
 int Filesystem::Chroot(const char* path) {
     WARN("chroot(%s)", path);
     if (g_config.no_rootfs) {
-        return syscall(SYS_chroot, path);
+        return libc_result(syscall(SYS_chroot, path));
     }
 
     if (!path) {
@@ -648,7 +648,7 @@ int Filesystem::Chroot(const char* path) {
 int Filesystem::PivotRoot(const char* new_root, const char* put_old) {
     WARN("pivot_root(%s, %s)", new_root, put_old);
     if (g_config.no_rootfs) {
-        return syscall(SYS_pivot_root, new_root, put_old);
+        return libc_result(syscall(SYS_pivot_root, new_root, put_old));
     }
 
     const std::filesystem::path rootfs = g_config.rootfs_path;
@@ -713,7 +713,7 @@ int Filesystem::PivotRoot(const char* new_root, const char* put_old) {
 
 int Filesystem::Mount(const char* source, const char* target, const char* fstype, u64 flags, const void* data) {
     if (g_config.no_rootfs) {
-        return ::mount(source, target, fstype, flags, data);
+        return libc_result(::mount(source, target, fstype, flags, data));
     }
 
     bool mount_root_if_fail = false;
@@ -780,7 +780,7 @@ int Filesystem::Umount(const char* path, int flags) {
         VERBOSE("Error while resolving path during umount(%s), error: %s", path, strerror(fd_path.get_errno()));
         return -fd_path.get_errno();
     }
-    return ::umount2(fd_path.full_path(), flags);
+    return libc_result(::umount2(fd_path.full_path(), flags));
 }
 
 int Filesystem::INotifyAddWatch(int fd, const char* path, u32 mask) {
@@ -789,7 +789,7 @@ int Filesystem::INotifyAddWatch(int fd, const char* path, u32 mask) {
         VERBOSE("Error while resolving path during inotifyaddwatch(%s), error: %s", path, strerror(fd_path.get_errno()));
         return -fd_path.get_errno();
     }
-    return inotify_add_watch(fd, fd_path.full_path(), mask);
+    return libc_result(inotify_add_watch(fd, fd_path.full_path(), mask));
 }
 
 int Filesystem::Truncate(const char* path, u64 length) {
@@ -798,12 +798,12 @@ int Filesystem::Truncate(const char* path, u64 length) {
         VERBOSE("Error while resolving path during truncate(%s), error: %s", path, strerror(fd_path.get_errno()));
         return -fd_path.get_errno();
     }
-    return truncate(fd_path.full_path(), length);
+    return libc_result(truncate(fd_path.full_path(), length));
 }
 
 int Filesystem::openatInternal(int fd, const char* filename, int flags, u64 mode) {
-    int opened_fd = ::syscall(SYS_openat, fd, filename, flags, mode);
-    if (opened_fd != -1) {
+    int opened_fd = libc_result(::syscall(SYS_openat, fd, filename, flags, mode));
+    if (opened_fd >= 0) {
         struct statx stat;
         ASSERT(::statx(opened_fd, "", AT_EMPTY_PATH, STATX_TYPE | STATX_INO | STATX_MNT_ID, &stat) == 0);
         for (int i = 0; i < EMULATED_NODE_COUNT; i++) {
@@ -821,71 +821,71 @@ int Filesystem::openatInternal(int fd, const char* filename, int flags, u64 mode
 }
 
 int Filesystem::faccessatInternal(int fd, const char* filename, int mode, int flags) {
-    return ::syscall(SYS_faccessat2, fd, filename, mode, flags);
+    return libc_result(::syscall(SYS_faccessat2, fd, filename, mode, flags));
 }
 
 int Filesystem::fstatatInternal(int fd, const char* filename, struct stat* host_stat, int flags) {
-    return ::syscall(SYS_newfstatat, fd, filename, host_stat, flags);
+    return libc_result(::syscall(SYS_newfstatat, fd, filename, host_stat, flags));
 }
 
 int Filesystem::statfsInternal(const std::filesystem::path& path, struct statfs* buf) {
-    return ::syscall(SYS_statfs, path.c_str(), buf);
+    return libc_result(::syscall(SYS_statfs, path.c_str(), buf));
 }
 
 int Filesystem::readlinkatInternal(int fd, const char* filename, char* buf, int bufsiz) {
-    return ::syscall(SYS_readlinkat, fd, filename, buf, bufsiz);
+    return libc_result(::syscall(SYS_readlinkat, fd, filename, buf, bufsiz));
 }
 
 int Filesystem::statxInternal(int fd, const char* filename, int flags, u32 mask, struct statx* statxbuf) {
-    return ::syscall(SYS_statx, fd, filename, flags, mask, statxbuf);
+    return libc_result(::syscall(SYS_statx, fd, filename, flags, mask, statxbuf));
 }
 
 int Filesystem::linkatInternal(int oldfd, const char* oldpath, int newfd, const char* newpath, int flags) {
-    return ::syscall(SYS_linkat, oldfd, oldpath, newfd, newpath, flags);
+    return libc_result(::syscall(SYS_linkat, oldfd, oldpath, newfd, newpath, flags));
 }
 
 int Filesystem::unlinkatInternal(int fd, const char* filename, int flags) {
-    return ::syscall(SYS_unlinkat, fd, filename, flags);
+    return libc_result(::syscall(SYS_unlinkat, fd, filename, flags));
 }
 
 int Filesystem::getxattrInternal(const char* filename, const char* name, void* value, size_t size) {
-    return ::syscall(SYS_getxattr, filename, name, value, size);
+    return libc_result(::syscall(SYS_getxattr, filename, name, value, size));
 }
 
 int Filesystem::lgetxattrInternal(const char* filename, const char* name, void* value, size_t size) {
-    return ::syscall(SYS_lgetxattr, filename, name, value, size);
+    return libc_result(::syscall(SYS_lgetxattr, filename, name, value, size));
 }
 
 int Filesystem::setxattrInternal(const char* filename, const char* name, void* value, size_t size, int flags) {
-    return ::syscall(SYS_setxattr, filename, name, value, size, flags);
+    return libc_result(::syscall(SYS_setxattr, filename, name, value, size, flags));
 }
 
 int Filesystem::lsetxattrInternal(const char* filename, const char* name, void* value, size_t size, int flags) {
-    return ::syscall(SYS_lsetxattr, filename, name, value, size, flags);
+    return libc_result(::syscall(SYS_lsetxattr, filename, name, value, size, flags));
 }
 
 int Filesystem::removexattrInternal(const char* filename, const char* name) {
-    return ::syscall(SYS_removexattr, filename, name);
+    return libc_result(::syscall(SYS_removexattr, filename, name));
 }
 
 int Filesystem::lremovexattrInternal(const char* filename, const char* name) {
-    return ::syscall(SYS_lremovexattr, filename, name);
+    return libc_result(::syscall(SYS_lremovexattr, filename, name));
 }
 
 int Filesystem::utimensatInternal(int fd, const char* filename, struct timespec* spec, int flags) {
-    return ::syscall(SYS_utimensat, fd, filename, spec, flags);
+    return libc_result(::syscall(SYS_utimensat, fd, filename, spec, flags));
 }
 
 int Filesystem::fchmodatInternal(int fd, const char* filename, u64 mode) {
-    return ::syscall(SYS_fchmodat, fd, filename, mode);
+    return libc_result(::syscall(SYS_fchmodat, fd, filename, mode));
 }
 
 int Filesystem::fchownatInternal(int fd, const char* filename, uid_t user, gid_t group, int flags) {
-    return ::syscall(SYS_fchownat, fd, filename, user, group, flags);
+    return libc_result(::syscall(SYS_fchownat, fd, filename, user, group, flags));
 }
 
 int Filesystem::rmdirInternal(const char* path) {
-    return ::rmdir(path);
+    return libc_result(::rmdir(path));
 }
 
 FdPath Filesystem::resolve(int fd, const char* path, bool resolve_symlinks) {

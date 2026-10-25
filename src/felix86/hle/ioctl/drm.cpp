@@ -1,5 +1,6 @@
 #include <sys/ioctl.h>
 #include "felix86/common/log.hpp"
+#include "felix86/common/utility.hpp"
 #include "felix86/hle/ioctl/common.hpp"
 #include "felix86/hle/ioctl/drm.hpp"
 #include "felix86/hle/ioctl32.hpp"
@@ -17,7 +18,7 @@ int ioctl32_drm(int fd, u32 cmd, u32 args) {
                 Ioctl32::registerFd(fd, name);
             }
         }
-        return result;
+        return libc_result(result);
     }
 
     case _IOC_NR(DRM_IOCTL_WAIT_VBLANK): {
@@ -28,7 +29,7 @@ int ioctl32_drm(int fd, u32 cmd, u32 args) {
         if (result != -1) {
             guest->reply = host.reply;
         }
-        return result;
+        return libc_result(result);
     }
 
         MARSHAL_CASE(DRM_IOCTL_GET_UNIQUE, drm_unique);

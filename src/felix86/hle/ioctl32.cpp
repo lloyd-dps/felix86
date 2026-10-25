@@ -5,6 +5,7 @@
 #include <sys/ioctl.h>
 #include "felix86/common/global.hpp"
 #include "felix86/common/log.hpp"
+#include "felix86/common/utility.hpp"
 #include "felix86/hle/ioctl32.hpp"
 
 #include "felix86/hle/ioctl/amdgpu.hpp"
@@ -15,7 +16,7 @@
 #include "felix86/hle/ioctl/tty.hpp"
 
 static int ioctl32_default(int fd, u32 cmd, u32 args) {
-    return ::ioctl(fd, cmd, (u64)args);
+    return libc_result(::ioctl(fd, cmd, (u64)args));
 }
 
 static int ioctl32_unknown(int fd, u32 cmd, u32 args) {

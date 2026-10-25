@@ -673,7 +673,7 @@ CATCH_TEST_CASE("MremapUnmappedSourceReturnsError", "[mmap32]") {
     g_mode32 = true;
 
     void* result = mapper.remap(g_mode32, (void*)0x40000, 0x1000, 0x2000, MREMAP_MAYMOVE, nullptr);
-    CATCH_REQUIRE(result == MAP_FAILED);
+    CATCH_REQUIRE((i64)result < 0);
 
     SUCCESS_MESSAGE();
 }
@@ -1923,7 +1923,7 @@ CATCH_TEST_CASE("Map64DoesNotReserveLowMemory", "[mmap]") {
     g_mode32 = false;
 
     void* high = mapper.map(false, nullptr, 0x5000, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-    CATCH_REQUIRE(high != MAP_FAILED);
+    CATCH_REQUIRE((i64)high >= 0);
     CATCH_REQUIRE((u64)high > UINT32_MAX);
 
     u64 min = mmap_min_addr();
@@ -1946,7 +1946,7 @@ CATCH_TEST_CASE("Map64DoesNotConsumeFreelist", "[mmap]") {
 
     void* address = nullptr;
     MMAP_AT_R(address, 0x10000, PROT_NONE, 0);
-    CATCH_REQUIRE(address != MAP_FAILED);
+    CATCH_REQUIRE((i64)address >= 0);
     CATCH_REQUIRE((u64)address > UINT32_MAX);
 
     verifyRegions(mapper, {{(u32)mmap_min_addr(), UINT32_MAX}});

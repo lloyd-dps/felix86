@@ -116,7 +116,7 @@ void* Mapper::remap32(void* old_address, u64 old_size, u64 new_size, int flags, 
         ASSERT((u64)new_address <= UINT32_MAX);
         void* result = ::mremap(old_address, old_size, new_size, flags, new_address);
         if (result == MAP_FAILED) {
-            return MAP_FAILED;
+            return (void*)libc_result((ssize_t)result);
         }
 
         // Since the mapping succeeded we also need to update our freelist allocator
@@ -145,8 +145,9 @@ void* Mapper::remap32(void* old_address, u64 old_size, u64 new_size, int flags, 
         // Actually perform the remap now, but make it fixed
         void* result = ::mremap(old_address, old_size, new_size, flags | MREMAP_MAYMOVE | MREMAP_FIXED, new_address);
         if (result == MAP_FAILED) {
+            i64 error = -errno;
             freelist.deallocate((u64)new_address, new_size);
-            return MAP_FAILED;
+            return (void*)error;
         }
 
         // After everything goes ok we can unmap the old region
@@ -188,7 +189,7 @@ void* Mapper::map(bool mode32, void* addr, u64 size, int prot, int flags, int fd
                                (flags & MAP_ANONYMOUS) != 0);
         }
 
-        return result;
+        return (void*)libc_result((ssize_t)result);
     }
 }
 
@@ -212,7 +213,7 @@ int Mapper::unmap(bool mode32, void* addr, u64 size) {
             }
         }
 
-        return result;
+        return libc_result(result);
     }
 }
 
@@ -245,7 +246,7 @@ void* Mapper::remap(bool mode32, void* old_address, u64 old_size, u64 new_size, 
             move_tracked_region((u64)old_address, old_size, (u64)result, new_size, !(flags & MREMAP_DONTUNMAP));
         }
 
-        return result;
+        return (void*)libc_result((ssize_t)result);
     }
 }
 
@@ -264,7 +265,7 @@ int Mapper::protect(void* addr, u64 size, int prot) {
         move_tracked_region((u64)start, size, (u64)start, size, true, prot & (PROT_READ | PROT_WRITE | PROT_EXEC), false);
     }
 
-    return res;
+    return libc_result(res);
 }
 
 std::vector<std::pair<u32, u32>> Mapper::getRegions() {
@@ -358,7 +359,7 @@ int Mapper::shmdt(bool mode32, void* address) {
     auto it = page_to_shmid.find((u64)address & ~0xFFFull);
     if (it == page_to_shmid.end()) {
         IMPORTANT("Could not find page during shmdt: %lx", (u64)address & ~0xFFFul);
-        return ::shmdt(address);
+        return libc_result(::shmdt(address));
     }
 
     int shmid = it->second;
@@ -421,7 +422,7 @@ int Mapper::shmdt(bool mode32, void* address) {
         page_to_shmid.erase(it);
     }
 
-    return result;
+    return libc_result(result);
 }
 
 std::map<u64, GuestRegion>::iterator Mapper::first_region_ending_after(u64 address) {

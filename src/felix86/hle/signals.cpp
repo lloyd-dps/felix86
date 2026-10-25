@@ -2045,7 +2045,6 @@ int Signals::sigaltstack(ThreadState* state, stack_t* new_ss, stack_t* old_ss, i
     if (new_ss) {
         if (on_stack) {
             WARN("Tried to set sigaltstack while using it");
-            errno = EPERM; // TODO: remove when result rewrite
             return -EPERM;
         }
 

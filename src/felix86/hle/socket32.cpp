@@ -2,6 +2,7 @@
 #include <vector>
 #include <sys/socket.h>
 #include "felix86/common/log.hpp"
+#include "felix86/common/utility.hpp"
 #include "felix86/hle/socket32.hpp"
 
 #ifndef SO_RCVTIMEO_OLD
@@ -128,7 +129,7 @@ int recvmsg32(int fd, x86_msghdr* guest_msghdr, int flags) {
             }
         }
     }
-    return result;
+    return libc_result(result);
 }
 
 int sendmsg32(int fd, const x86_msghdr* guest_msghdr, int flags) {
@@ -178,7 +179,7 @@ int sendmsg32(int fd, const x86_msghdr* guest_msghdr, int flags) {
         }
     }
 
-    return ::sendmsg(fd, &host_msghdr, flags);
+    return libc_result(::sendmsg(fd, &host_msghdr, flags));
 }
 
 int recvmmsg32(int fd, x86_mmsghdr* messages, u32 n, int flags, x86_timespec* timeout) {
@@ -250,7 +251,7 @@ int recvmmsg32(int fd, x86_mmsghdr* messages, u32 n, int flags, x86_timespec* ti
         *timeout = host_timeout;
     }
 
-    return result;
+    return libc_result(result);
 }
 
 // Thanks FEX-Emu for these
@@ -322,12 +323,12 @@ int sendmmsg32(int fd, x86_mmsghdr* messages, u32 n, int flags) {
         }
     }
 
-    return result;
+    return libc_result(result);
 }
 
 int getsockopt32(int fd, int level, int optname, char* optval, u32* optlen) {
     if (level != SOL_SOCKET) {
-        return ::getsockopt(fd, level, optname, optval, optlen);
+        return libc_result(::getsockopt(fd, level, optname, optval, optlen));
     } else {
         switch (optname) {
         case SO_DEBUG:
@@ -400,7 +401,7 @@ int getsockopt32(int fd, int level, int optname, char* optval, u32* optlen) {
         case SO_RESERVE_MEM:
         case SO_PASSPIDFD:
         case SO_PEERPIDFD: {
-            return ::getsockopt(fd, level, optname, optval, optlen);
+            return libc_result(::getsockopt(fd, level, optname, optval, optlen));
         }
         default: {
             ERROR("Unhandled getsockopt optname: %d", optname);
@@ -412,7 +413,7 @@ int getsockopt32(int fd, int level, int optname, char* optval, u32* optlen) {
 
 int setsockopt32(int fd, int level, int optname, char* optval, int optlen) {
     if (level != SOL_SOCKET) {
-        return ::setsockopt(fd, level, optname, optval, optlen);
+        return libc_result(::setsockopt(fd, level, optname, optval, optlen));
     } else {
         switch (optname) {
         case SO_ATTACH_FILTER:
@@ -435,15 +436,15 @@ int setsockopt32(int fd, int level, int optname, char* optval, int optlen) {
             prog64.len = prog->len;
             prog64.filter = prog->filter;
 
-            return ::setsockopt(fd, level, optname, &prog64, sizeof(sock_fprog64));
+            return libc_result(::setsockopt(fd, level, optname, &prog64, sizeof(sock_fprog64)));
         }
         case SO_RCVTIMEO_OLD: {
             struct timeval timeval = *(x86_timeval*)optval;
-            return ::setsockopt(fd, level, SO_RCVTIMEO_NEW, &timeval, sizeof(timeval));
+            return libc_result(::setsockopt(fd, level, SO_RCVTIMEO_NEW, &timeval, sizeof(timeval)));
         }
         case SO_SNDTIMEO_OLD: {
             struct timeval timeval = *(x86_timeval*)optval;
-            return ::setsockopt(fd, level, SO_SNDTIMEO_NEW, &timeval, sizeof(timeval));
+            return libc_result(::setsockopt(fd, level, SO_SNDTIMEO_NEW, &timeval, sizeof(timeval)));
         }
         case SO_DEBUG:
         case SO_REUSEADDR:
@@ -515,7 +516,7 @@ int setsockopt32(int fd, int level, int optname, char* optval, int optlen) {
         case SO_RCVMARK:
         case SO_PASSPIDFD:
         case SO_PEERPIDFD: {
-            return ::setsockopt(fd, level, optname, optval, optlen);
+            return libc_result(::setsockopt(fd, level, optname, optval, optlen));
         }
         default: {
             ERROR("Unhandled setsockopt optname: %d", optname);

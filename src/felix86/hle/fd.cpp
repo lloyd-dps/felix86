@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <sys/syscall.h>
 #include "felix86/common/log.hpp"
+#include "felix86/common/utility.hpp"
 #include "felix86/hle/fd.hpp"
 #include "felix86/hle/guest_types.hpp"
 
@@ -29,7 +30,7 @@ void FD::unprotectAndClose(int fd) {
 
 int FD::close(int fd) {
     if (fd < 2) {
-        return ::close(fd);
+        return libc_result(::close(fd));
     }
 
     auto guard = g_process_globals.states_lock.lock();
@@ -37,7 +38,7 @@ int FD::close(int fd) {
         WARN("Program tried to close one of our fds: %d", fd);
         return 0; // pretend we closed the fd but keep it open
     } else {
-        return ::close(fd);
+        return libc_result(::close(fd));
     }
 }
 
@@ -56,7 +57,7 @@ static bool is_proc_fd_directory(int fd) {
 }
 
 long FD::getdents64(int fd, u64 dirp, u32 count) {
-    long result = ::syscall(SYS_getdents64, fd, dirp, count);
+    long result = libc_result(::syscall(SYS_getdents64, fd, dirp, count));
     if (result <= 0) {
         return result;
     }
@@ -98,7 +99,7 @@ int FD::close_range(u32 start, u32 end, int flags) {
             WARN("Program tried to close one of our fds: %d", protected_fd);
             int result = ::close_range(current_start, protected_fd - 1, flags);
             if (result != 0) {
-                return result;
+                return libc_result(result);
             }
             current_start = protected_fd + 1;
         }
@@ -106,7 +107,7 @@ int FD::close_range(u32 start, u32 end, int flags) {
 
     if (current_start <= end) {
         // Close the remaining fds
-        return ::close_range(current_start, end, flags);
+        return libc_result(::close_range(current_start, end, flags));
     } else {
         return 0;
     }
@@ -125,7 +126,7 @@ int FD::dup2(int old_fd, int new_fd) {
             }
         }
     }
-    return ::dup2(old_fd, new_fd);
+    return libc_result(::dup2(old_fd, new_fd));
 }
 
 int FD::dup3(int old_fd, int new_fd, int flags) {
@@ -141,7 +142,7 @@ int FD::dup3(int old_fd, int new_fd, int flags) {
             }
         }
     }
-    return ::dup3(old_fd, new_fd, flags);
+    return libc_result(::dup3(old_fd, new_fd, flags));
 }
 
 int FD::moveToHighNumber(int fd) {

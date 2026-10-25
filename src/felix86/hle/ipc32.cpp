@@ -30,10 +30,10 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
     u32 operation = call & 0xFFFF;
     switch (operation) {
     case felix86_SEMOP: {
-        return ::syscall(SYS_semop, first, (sembuf*)ptr, second);
+        return libc_result(::syscall(SYS_semop, first, (sembuf*)ptr, second));
     }
     case felix86_SEMGET: {
-        return ::syscall(SYS_semget, first, second, third);
+        return libc_result(::syscall(SYS_semget, first, second, third));
     }
     case felix86_SEMCTL: {
         u64 semid = first;
@@ -57,7 +57,7 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
                     *(x86_semid_ds_32*)(u64)semun->_u32 = host_semid;
                 }
             }
-            return result;
+            return libc_result(result);
         }
         case SEM_STAT:
         case SEM_STAT_ANY:
@@ -71,25 +71,25 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
                     *(x86_semid_ds_32*)(u64)semun->_u32 = host_semid;
                 }
             }
-            return result;
+            return libc_result(result);
         }
         case SEM_INFO:
         case IPC_INFO: {
-            return ::syscall(SYS_semctl, semid, semnum, semcmd, (u64)semun->_u32);
+            return libc_result(::syscall(SYS_semctl, semid, semnum, semcmd, (u64)semun->_u32));
         }
         case GETALL:
         case SETALL: {
-            return ::syscall(SYS_semctl, semid, semnum, semcmd, (u64)semun->_u32);
+            return libc_result(::syscall(SYS_semctl, semid, semnum, semcmd, (u64)semun->_u32));
         }
         case SETVAL: {
-            return ::syscall(SYS_semctl, semid, semnum, semcmd, (u64)semun->_i32);
+            return libc_result(::syscall(SYS_semctl, semid, semnum, semcmd, (u64)semun->_i32));
         }
         case IPC_RMID:
         case GETPID:
         case GETNCNT:
         case GETZCNT:
         case GETVAL: {
-            return ::syscall(SYS_semctl, semid, semnum, semcmd, nullptr);
+            return libc_result(::syscall(SYS_semctl, semid, semnum, semcmd, nullptr));
         }
         default: {
             ERROR("Unknown SEMCTL operation: %lu", semcmd);
@@ -106,10 +106,10 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
             host_timespec = *guest_timespec;
             host_timespec_ptr = &host_timespec;
         }
-        return ::syscall(SYS_semtimedop, first, ptr, second, host_timespec_ptr);
+        return libc_result(::syscall(SYS_semtimedop, first, ptr, second, host_timespec_ptr));
     }
     case felix86_SHMGET: {
-        return ::syscall(SYS_shmget, first, second, third);
+        return libc_result(::syscall(SYS_shmget, first, second, third));
     }
     case felix86_SHMCTL: {
         u32 shmid = first;
@@ -128,7 +128,7 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
             } else {
                 host_shmid = *ptr32;
             }
-            return ::syscall(SYS_shmctl, shmid, cmd, &host_shmid);
+            return libc_result(::syscall(SYS_shmctl, shmid, cmd, &host_shmid));
         }
         case SHM_STAT:
         case SHM_STAT_ANY:
@@ -142,7 +142,7 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
                     *ptr32 = host_shmid;
                 }
             }
-            return result;
+            return libc_result(result);
         }
         case IPC_INFO: {
             struct riscv64_shminfo host_shminfo{};
@@ -154,7 +154,7 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
                     *shminfo32 = host_shminfo;
                 }
             }
-            return result;
+            return libc_result(result);
         }
         case SHM_INFO: {
             struct riscv64_shm_info host_shm_info{};
@@ -162,14 +162,14 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
             if (result != -1) {
                 *(x86_shm_info_32*)ptr = host_shm_info;
             }
-            return result;
+            return libc_result(result);
         }
         case SHM_LOCK:
-            return ::syscall(SYS_shmctl, shmid, cmd, nullptr);
+            return libc_result(::syscall(SYS_shmctl, shmid, cmd, nullptr));
         case SHM_UNLOCK:
-            return ::syscall(SYS_shmctl, shmid, cmd, nullptr);
+            return libc_result(::syscall(SYS_shmctl, shmid, cmd, nullptr));
         case IPC_RMID:
-            return ::syscall(SYS_shmctl, shmid, cmd, nullptr);
+            return libc_result(::syscall(SYS_shmctl, shmid, cmd, nullptr));
         default: {
             ERROR("Unknown SHMCTL operation: %d", cmd);
             return 0;
@@ -194,7 +194,7 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
         return g_mapper->shmdt(true, address);
     }
     case felix86_MSGGET: {
-        return ::syscall(SYS_msgget, first, second);
+        return libc_result(::syscall(SYS_msgget, first, second));
     }
     default: {
         ERROR("Unknown IPC operation: %d", operation);

@@ -48,29 +48,6 @@
 #include "felix86/hle/thread.hpp"
 #include "felix86/v2/recompiler.hpp"
 
-// Annoyingly, the ::syscall function returns -1 instead of the actual error number.
-struct Result {
-    Result& operator=(ssize_t inner) {
-        if (inner == -1) {
-            this->inner = -errno;
-        } else {
-            this->inner = inner;
-        }
-        return *this;
-    }
-
-    operator ssize_t() const {
-        return inner;
-    }
-
-    operator void*() const {
-        return (void*)inner;
-    }
-
-private:
-    ssize_t inner = -1;
-};
-
 // We add felix86_${ARCH}_ in front of the linux related identifiers to avoid
 // naming conflicts
 
@@ -83,14 +60,10 @@ private:
 #define SS_AUTODISARM (1U << 31)
 #endif
 
-#define SYSCALL(name, ...) (syscall(x64_to_riscv(felix86_x86_64_##name), ##__VA_ARGS__))
+#define SYSCALL(name, ...) (libc_result(syscall(x64_to_riscv(felix86_x86_64_##name), ##__VA_ARGS__)))
 
 static i64 interruptible_syscall(ThreadState* state, u64 nr, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6) {
-    i64 result = state->recompiler->interruptibleSyscall(&state->effective_deferred_signals, nr, arg1, arg2, arg3, arg4, arg5, arg6);
-    if (result == -1) {
-        errno = EPERM;
-    }
-    return result;
+    return state->recompiler->interruptibleSyscall(&state->effective_deferred_signals, nr, arg1, arg2, arg3, arg4, arg5, arg6);
 }
 
 #define INTERRUPTIBLE_SYSCALL(name, ...) (interruptible_syscall(state, x64_to_riscv(felix86_x86_64_##name), ##__VA_ARGS__))
@@ -209,10 +182,10 @@ static bool is_xdg_open_url(const char* arg) {
     return url.starts_with("https://") || url.starts_with("http://");
 }
 
-static Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6) {
+static ssize_t felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 arg1, u64 arg2, u64 arg3, u64 arg4, u64 arg5, u64 arg6) {
     ThreadState* state = frame->state;
     bool mode32 = state->ctx.Mode32();
-    Result result;
+    ssize_t result = -1;
     switch (rv_syscall) {
     case felix86_riscv64_brk: {
         result = BRK::set(mode32, arg1);
@@ -766,7 +739,7 @@ static Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 a
         }
         g_process_globals.shm_manager.unlink();
         LOG("Process %d called exit_group(%d)", gettid(), (int)arg1);
-        SYSCALL(exit_group, arg1);
+        syscall(x64_to_riscv(felix86_x86_64_exit_group), arg1);
         UNREACHABLE();
         break;
     }
@@ -1772,7 +1745,7 @@ static Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 a
         // Note that we can't use in_clone here because the $gp register will point to uninitialized memory
         // as the execve has loaded the new process
         ThreadState::Set(nullptr);
-        result = syscall(SYS_execve, executable.c_str(), &argv[0], envp.data());
+        result = libc_result(syscall(SYS_execve, executable.c_str(), &argv[0], envp.data()));
         // If execve fails, set it back
         ThreadState::Set(state);
 
@@ -1786,8 +1759,6 @@ static Result felix86_syscall_common(felix86_frame* frame, int rv_syscall, u64 a
     }
     case felix86_riscv64_ptrace: {
         if (!g_config.ptrace_enabled) {
-            // TODO: remove me when we rewrite result/SYSCALL macro to not use errno
-            errno = EPERM; // since -EPERM == -1 the result operator= will use errno...
             result = -EPERM;
             break;
         }
@@ -1930,7 +1901,7 @@ void felix86_syscall(felix86_frame* frame) {
     }
 
     bool is_common = is_x64_common(syscall_number);
-    Result result;
+    ssize_t result = -1;
 
     switch (syscall_number) {
     case felix86_x86_64_futex:
@@ -1962,7 +1933,7 @@ void felix86_syscall(felix86_frame* frame) {
     } else {
         switch (syscall_number) {
         case felix86_x86_64_time: {
-            result = ::time((time_t*)arg1);
+            result = libc_result(::time((time_t*)arg1));
             break;
         }
         case felix86_x86_64_get_kernel_syms: {
@@ -2032,7 +2003,7 @@ void felix86_syscall(felix86_frame* frame) {
                 result = -ENOMEM;
                 break;
             }
-            result = epoll_wait((int)arg1, host_events.get(), (int)arg3, (int)arg4);
+            result = libc_result(epoll_wait((int)arg1, host_events.get(), (int)arg3, (int)arg4));
             if (result >= 0) {
                 x86_epoll_event* guest_event = (x86_epoll_event*)arg2;
                 for (int i = 0; i < result; i++) {
@@ -2058,7 +2029,7 @@ void felix86_syscall(felix86_frame* frame) {
             break;
         }
         case felix86_x86_64_poll: {
-            result = poll((struct pollfd*)arg1, arg2, arg3);
+            result = libc_result(poll((struct pollfd*)arg1, arg2, arg3));
             break;
         }
         case felix86_x86_64_dup2: {
@@ -2086,7 +2057,7 @@ void felix86_syscall(felix86_frame* frame) {
             break;
         }
         case felix86_x86_64_pipe: {
-            result = ::pipe((int*)arg1);
+            result = libc_result(::pipe((int*)arg1));
             break;
         }
         case felix86_x86_64_mknod: {
@@ -2162,7 +2133,6 @@ void felix86_syscall(felix86_frame* frame) {
             case felix86_x86_64_ARCH_SET_GS: {
                 if (arg2 > mmap_max_addr()) {
                     WARN("Passing bad address to ARCH_SET_GS: %lx", arg2);
-                    errno = EPERM; // TODO: when result is reworked, remove this
                     result = -EPERM;
                     break;
                 }
@@ -2175,7 +2145,6 @@ void felix86_syscall(felix86_frame* frame) {
             case felix86_x86_64_ARCH_SET_FS: {
                 if (arg2 > mmap_max_addr()) {
                     WARN("Passing bad address to ARCH_SET_FS: %lx", arg2);
-                    errno = EPERM; // TODO: when result is reworked, remove this
                     result = -EPERM;
                     break;
                 }
@@ -2331,7 +2300,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
         return;
     }
 
-    Result result;
+    ssize_t result = -1;
 
     bool is_common = is_x86_common(syscall_number);
 
@@ -2443,7 +2412,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             break;
         }
         case felix86_x86_32_pipe: {
-            result = ::pipe((int*)arg1);
+            result = libc_result(::pipe((int*)arg1));
             break;
         }
         case felix86_x86_32_rt_sigqueueinfo: {
@@ -2497,7 +2466,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             loff_t* res = (loff_t*)arg4;
             u64 whence = arg5;
             u64 offset = (offset_high << 32) | offset_low;
-            result = ::lseek(fd, offset, whence);
+            result = libc_result(::lseek(fd, offset, whence));
             if (result >= 0) {
                 *res = result;
                 result = 0;
@@ -2558,7 +2527,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             u64 length_high = arg6;
             u64 offset = (offset_high << 32) | offset_low;
             u64 length = (length_high << 32) | length_low;
-            result = fallocate(fd, mode, offset, length);
+            result = libc_result(fallocate(fd, mode, offset, length));
             break;
         }
         case felix86_x86_32_readv: {
@@ -2597,7 +2566,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
                 result = -ENOMEM;
                 break;
             }
-            result = epoll_wait((int)arg1, host_events.get(), (int)arg3, (int)arg4);
+            result = libc_result(epoll_wait((int)arg1, host_events.get(), (int)arg3, (int)arg4));
             if (result >= 0) {
                 x86_epoll_event* guest_event = (x86_epoll_event*)arg2;
                 for (int i = 0; i < result; i++) {
@@ -2626,7 +2595,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
         case felix86_x86_32_clock_gettime32: {
             if (arg2) {
                 struct timespec time;
-                result = clock_gettime(arg1, &time);
+                result = libc_result(clock_gettime(arg1, &time));
                 *(x86_timespec*)arg2 = time;
             } else {
                 result = -EFAULT;
@@ -2671,7 +2640,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             if (arg2) {
                 struct timespec time;
                 time = *(x86_timespec*)arg2;
-                result = clock_settime(arg1, &time);
+                result = libc_result(clock_settime(arg1, &time));
             } else {
                 result = -EFAULT;
             }
@@ -2855,7 +2824,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
         }
         case felix86_x86_32_getrlimit: {
             rlimit limit;
-            result = getrlimit((int)arg1, &limit);
+            result = libc_result(getrlimit((int)arg1, &limit));
             if (result == 0) {
                 x86_rlimit* guest_limit = (x86_rlimit*)arg2;
                 *guest_limit = limit;
@@ -2903,7 +2872,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             switch (arg2) {
             case X86_GETLK64: {
                 host_flock = *guest_flock64;
-                result = ::fcntl(fd, F_GETLK, &host_flock);
+                result = libc_result(::fcntl(fd, F_GETLK, &host_flock));
                 if (result >= 0) {
                     *guest_flock64 = host_flock;
                 }
@@ -2911,17 +2880,17 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             }
             case X86_SETLK64: {
                 host_flock = *guest_flock64;
-                result = ::fcntl(fd, F_SETLK, &host_flock);
+                result = libc_result(::fcntl(fd, F_SETLK, &host_flock));
                 break;
             }
             case X86_SETLKW64: {
                 host_flock = *guest_flock64;
-                result = ::fcntl(fd, F_SETLKW, &host_flock);
+                result = libc_result(::fcntl(fd, F_SETLKW, &host_flock));
                 break;
             }
             case F_OFD_GETLK: {
                 host_flock = *guest_flock64;
-                result = ::fcntl(fd, F_OFD_GETLK, &host_flock);
+                result = libc_result(::fcntl(fd, F_OFD_GETLK, &host_flock));
                 if (result >= 0) {
                     *guest_flock64 = host_flock;
                 }
@@ -2930,12 +2899,12 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             case F_OFD_SETLK:
             case F_OFD_SETLKW: {
                 host_flock = *guest_flock64;
-                result = ::fcntl(fd, arg2, &host_flock);
+                result = libc_result(::fcntl(fd, arg2, &host_flock));
                 break;
             }
             case F_GETLK: {
                 host_flock = *guest_flock32;
-                result = ::fcntl(fd, F_GETLK, &host_flock);
+                result = libc_result(::fcntl(fd, F_GETLK, &host_flock));
                 if (result >= 0) {
                     *guest_flock32 = host_flock;
                 }
@@ -2943,17 +2912,17 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             }
             case F_SETLK: {
                 host_flock = *guest_flock32;
-                result = ::fcntl(fd, F_SETLK, &host_flock);
+                result = libc_result(::fcntl(fd, F_SETLK, &host_flock));
                 break;
             }
             case F_SETLKW: {
                 host_flock = *guest_flock32;
-                result = ::fcntl(fd, F_SETLKW, &host_flock);
+                result = libc_result(::fcntl(fd, F_SETLKW, &host_flock));
                 break;
             }
             case F_DUPFD:
             case F_DUPFD_CLOEXEC: {
-                result = ::fcntl(arg1, arg2, arg3);
+                result = libc_result(::fcntl(arg1, arg2, arg3));
                 if (result > 0) {
                     Ioctl32::duplicateFd(fd, result);
                 }
@@ -2968,12 +2937,12 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             case F_GETPIPE_SZ:
             case F_SETPIPE_SZ:
             case F_NOTIFY: {
-                result = ::fcntl(arg1, arg2, arg3);
+                result = libc_result(::fcntl(arg1, arg2, arg3));
                 break;
             }
             default: {
                 WARN("Unknown fcntl: %lu", arg2);
-                result = ::fcntl(arg1, arg2, arg3);
+                result = libc_result(::fcntl(arg1, arg2, arg3));
                 break;
             }
             }
@@ -3001,7 +2970,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             ASSERT(arg2 == sizeof(x86_statfs64));
             struct statfs statfs;
             x86_statfs64* guest_statfs = (x86_statfs64*)arg3;
-            result = ::fstatfs(arg1, &statfs);
+            result = libc_result(::fstatfs(arg1, &statfs));
             if (result >= 0) {
                 *guest_statfs = statfs;
             }
@@ -3009,7 +2978,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
         }
         case felix86_x86_32_sysinfo: {
             struct sysinfo host_sysinfo;
-            result = ::sysinfo(&host_sysinfo);
+            result = libc_result(::sysinfo(&host_sysinfo));
             if (result == 0) {
                 *(x86_sysinfo*)arg1 = host_sysinfo;
             }
@@ -3020,7 +2989,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             break;
         }
         case felix86_x86_32_time32: {
-            result = ::time(nullptr);
+            result = libc_result(::time(nullptr));
             if (result >= 0 && arg1) {
                 if (result > UINT32_MAX) {
                     WARN("Host time during time32 exceeds UINT32_MAX: %lx", (u64)result);
@@ -3120,7 +3089,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
         }
         case felix86_x86_32_fstat64: {
             struct stat host_stat;
-            result = ::fstat(arg1, &host_stat);
+            result = libc_result(::fstat(arg1, &host_stat));
             if (result >= 0) {
                 *(x86_stat64*)arg2 = host_stat;
             }
@@ -3162,14 +3131,14 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             u64 pos_low = arg4;
             u64 pos_high = arg5;
             u64 pos = pos_low | (pos_high << 32);
-            result = pread64(arg1, (void*)arg2, arg3, pos);
+            result = libc_result(pread64(arg1, (void*)arg2, arg3, pos));
             break;
         }
         case felix86_x86_32_ia32_pwrite64: {
             u64 pos_low = arg4;
             u64 pos_high = arg5;
             u64 pos = pos_low | (pos_high << 32);
-            result = pwrite64(arg1, (void*)arg2, arg3, pos);
+            result = libc_result(pwrite64(arg1, (void*)arg2, arg3, pos));
             break;
         }
         case felix86_x86_32_futex_time32: {
@@ -3186,7 +3155,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             break;
         }
         case felix86_x86_32_poll: {
-            result = ::poll((pollfd*)arg1, arg2, arg3);
+            result = libc_result(::poll((pollfd*)arg1, arg2, arg3));
             break;
         }
         case felix86_x86_32_sendmsg: {
@@ -3232,7 +3201,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             } else {
                 x86_rusage* guest_rusage = (x86_rusage*)arg2;
                 rusage host_rusage = *guest_rusage;
-                result = getrusage(arg1, &host_rusage);
+                result = libc_result(getrusage(arg1, &host_rusage));
                 *guest_rusage = host_rusage;
             }
             break;
@@ -3314,8 +3283,8 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
                 }
             }
 
-            result = ::pselect(nfds, readfds ? &host_readfds : nullptr, writefds ? &host_writefds : nullptr, exceptfds ? &host_exceptfds : nullptr,
-                               timeout ? &host_timespec : nullptr, &host_sigset);
+            result = libc_result(::pselect(nfds, readfds ? &host_readfds : nullptr, writefds ? &host_writefds : nullptr,
+                                           exceptfds ? &host_exceptfds : nullptr, timeout ? &host_timespec : nullptr, &host_sigset));
 
             if (readfds) {
                 for (int i = 0; i < nfds; i++) {
@@ -3402,7 +3371,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
         }
         case felix86_x86_32_times: {
             struct tms host_tms{};
-            result = ::times(&host_tms);
+            result = libc_result(::times(&host_tms));
             if (arg1) {
                 *(x86_tms*)arg1 = host_tms;
             }
@@ -3420,7 +3389,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             u64 offset_low = arg2;
             u64 offset_high = arg3;
             u64 offset = (offset_high << 32) | offset_low;
-            result = ftruncate(fd, offset);
+            result = libc_result(ftruncate(fd, offset));
             break;
         }
         case felix86_x86_32_socketcall: { // Funny syscall before the functions were separated
@@ -3450,16 +3419,16 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             u32* args = (u32*)arg2;
             switch (arg1) {
             case SYS_SOCKET: {
-                result = ::socket(args[0], args[1], args[2]);
+                result = libc_result(::socket(args[0], args[1], args[2]));
                 break;
             }
             case SYS_BIND: {
                 if (g_config.no_rootfs) {
-                    result = ::bind(args[0], (sockaddr*)(u64)args[1], args[2]);
+                    result = libc_result(::bind(args[0], (sockaddr*)(u64)args[1], args[2]));
                 } else {
                     auto sock = (sockaddr*)(u64)args[1];
                     if (args[2] <= 2 || sock->sa_family != AF_UNIX || (sock->sa_family == AF_UNIX && sock->sa_data[0] == 0)) {
-                        result = ::bind(args[0], (sockaddr*)(u64)args[1], args[2]);
+                        result = libc_result(::bind(args[0], (sockaddr*)(u64)args[1], args[2]));
                     } else {
                         FdPath socket_path = Filesystem::resolve((char*)sock->sa_data, true);
                         int len = strlen(socket_path.full_path());
@@ -3471,18 +3440,18 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
                         strncpy(addr.sun_path, socket_path.full_path(), sizeof(addr.sun_path) - 1);
                         size_t addrlen = offsetof(sockaddr_un, sun_path) + strlen(addr.sun_path) + 1;
 
-                        result = ::bind(args[0], (sockaddr*)&addr, addrlen);
+                        result = libc_result(::bind(args[0], (sockaddr*)&addr, addrlen));
                     }
                 }
                 break;
             }
             case SYS_CONNECT: {
                 if (g_config.no_rootfs) {
-                    result = ::connect(args[0], (sockaddr*)(u64)args[1], args[2]);
+                    result = libc_result(::connect(args[0], (sockaddr*)(u64)args[1], args[2]));
                 } else {
                     auto sock = (sockaddr*)(u64)args[1];
                     if (args[2] <= 2 || sock->sa_family != AF_UNIX || (sock->sa_family == AF_UNIX && sock->sa_data[0] == 0)) {
-                        result = ::connect(args[0], (sockaddr*)(u64)args[1], args[2]);
+                        result = libc_result(::connect(args[0], (sockaddr*)(u64)args[1], args[2]));
                     } else {
                         FdPath socket_path = Filesystem::resolve((char*)sock->sa_data, true);
                         int len = strlen(socket_path.full_path());
@@ -3494,49 +3463,49 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
                         strncpy(addr.sun_path, socket_path.full_path(), sizeof(addr.sun_path) - 1);
                         size_t addrlen = offsetof(sockaddr_un, sun_path) + strlen(addr.sun_path) + 1;
 
-                        result = ::connect(args[0], (sockaddr*)&addr, addrlen);
+                        result = libc_result(::connect(args[0], (sockaddr*)&addr, addrlen));
                     }
                 }
                 break;
             }
             case SYS_LISTEN: {
-                result = ::listen(args[0], args[1]);
+                result = libc_result(::listen(args[0], args[1]));
                 break;
             }
             case SYS_ACCEPT: {
-                result = ::accept(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2]);
+                result = libc_result(::accept(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2]));
                 break;
             }
             case SYS_GETSOCKNAME: {
-                result = ::getsockname(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2]);
+                result = libc_result(::getsockname(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2]));
                 break;
             }
             case SYS_GETPEERNAME: {
-                result = ::getpeername(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2]);
+                result = libc_result(::getpeername(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2]));
                 break;
             }
             case SYS_SOCKETPAIR: {
-                result = ::socketpair(args[0], args[1], args[2], (i32*)(u64)args[3]);
+                result = libc_result(::socketpair(args[0], args[1], args[2], (i32*)(u64)args[3]));
                 break;
             }
             case SYS_SEND: {
-                result = ::send(args[0], (void*)(u64)args[1], args[2], args[3]);
+                result = libc_result(::send(args[0], (void*)(u64)args[1], args[2], args[3]));
                 break;
             }
             case SYS_RECV: {
-                result = ::recv(args[0], (void*)(u64)args[1], args[2], args[3]);
+                result = libc_result(::recv(args[0], (void*)(u64)args[1], args[2], args[3]));
                 break;
             }
             case SYS_SENDTO: {
-                result = ::sendto(args[0], (void*)(u64)args[1], args[2], args[3], (sockaddr*)(u64)args[4], args[5]);
+                result = libc_result(::sendto(args[0], (void*)(u64)args[1], args[2], args[3], (sockaddr*)(u64)args[4], args[5]));
                 break;
             }
             case SYS_RECVFROM: {
-                result = ::recvfrom(args[0], (void*)(u64)args[1], args[2], args[3], (sockaddr*)(u64)args[4], (socklen_t*)(u64)args[5]);
+                result = libc_result(::recvfrom(args[0], (void*)(u64)args[1], args[2], args[3], (sockaddr*)(u64)args[4], (socklen_t*)(u64)args[5]));
                 break;
             }
             case SYS_SHUTDOWN: {
-                result = ::shutdown(args[0], args[1]);
+                result = libc_result(::shutdown(args[0], args[1]));
                 break;
             }
             case SYS_SETSOCKOPT: {
@@ -3556,7 +3525,7 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
                 break;
             }
             case SYS_ACCEPT4: {
-                result = ::accept4(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2], args[3]);
+                result = libc_result(::accept4(args[0], (sockaddr*)(u64)args[1], (socklen_t*)(u64)args[2], args[3]));
                 break;
             }
             case SYS_RECVMMSG: {

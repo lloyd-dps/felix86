@@ -698,7 +698,7 @@ int wait4(pid_t pid, int* status, int flags, struct rusage* ru) {
         *status = host_status;
     }
 
-    return result;
+    return libc_result(result);
 }
 
 i64 sys_ptrace(felix86_ptrace_request op, pid_t pid, void* addr, void* data) {
@@ -925,7 +925,7 @@ i64 sys_ptrace(felix86_ptrace_request op, pid_t pid, void* addr, void* data) {
         } else {
             ASSERT(result == -1);
         }
-        return result;
+        return libc_result(result);
     }
     case felix86_ptrace_request::felix86_PTRACE_PEEKUSER:
     case felix86_ptrace_request::felix86_PTRACE_POKEUSER: {
@@ -1163,7 +1163,7 @@ i64 sys_ptrace(felix86_ptrace_request op, pid_t pid, void* addr, void* data) {
             result = __ptrace(PTRACE_POKEDATA, pid, addr, data);
         }
         ASSERT(result == 0 || result == -1);
-        return result;
+        return libc_result(result);
     }
     case felix86_ptrace_request::felix86_PTRACE_CONT: {
         int sig = (i32)(u64)data;
@@ -1201,7 +1201,7 @@ i64 sys_ptrace(felix86_ptrace_request op, pid_t pid, void* addr, void* data) {
         return 0;
     }
     case felix86_ptrace_request::felix86_PTRACE_KILL: {
-        return __ptrace(PTRACE_KILL, pid, addr, data);
+        return libc_result(__ptrace(PTRACE_KILL, pid, addr, data));
     }
     case felix86_ptrace_request::felix86_PTRACE_SETOPTIONS: {
         u64 handled_flags = PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEFORK | PTRACE_O_TRACECLONE | PTRACE_O_TRACEVFORK |

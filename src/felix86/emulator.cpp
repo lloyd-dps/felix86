@@ -216,7 +216,7 @@ static void setupMainStack(ThreadState* state) {
         // point there directly in 64-bit mode
         std::span<u8> vdso_object = VDSO::getObject64();
         void* mem = g_mapper->map(false, nullptr, vdso_object.size(), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-        ASSERT(mem != MAP_FAILED);
+        ASSERT((i64)mem >= 0);
         memcpy(mem, vdso_object.data(), vdso_object.size());
         g_mapper->protect(mem, vdso_object.size(), PROT_READ | PROT_EXEC);
         auxv_entries.push_back({AT_SYSINFO_EHDR, {(u64)mem}});

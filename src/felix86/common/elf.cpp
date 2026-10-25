@@ -519,7 +519,7 @@ void Elf::Load(const std::filesystem::path& path) {
                 flags |= MAP_FIXED_NOREPLACE;
             }
             base_ptr = (u8*)g_mapper->map(is32bit, (void*)hint, highest_vaddr, 0, flags, -1, 0);
-            if (base_ptr == MAP_FAILED) {
+            if ((i64)base_ptr < 0) {
                 WARN("Failed to allocate ELF at %lx", hint);
                 base_ptr = (u8*)g_mapper->map(is32bit, nullptr, highest_vaddr, 0, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             }
@@ -530,7 +530,7 @@ void Elf::Load(const std::filesystem::path& path) {
         base_ptr = 0;
     }
 
-    if (base_ptr == MAP_FAILED) {
+    if ((i64)base_ptr < 0) {
         ERROR("Failed to allocate memory for ELF file %s", path.c_str());
     }
 
@@ -561,7 +561,7 @@ void Elf::Load(const std::filesystem::path& path) {
 
             if (segment_size) {
                 void* addr = g_mapper->map(is32bit, (void*)segment_base, segment_size, prot, MAP_PRIVATE | MAP_FIXED, fd, offset);
-                if (addr == MAP_FAILED) {
+                if ((i64)addr < 0) {
                     ERROR("Failed to allocate memory for segment in file %s. Error: %s", path.c_str(), strerror(errno));
                 } else if (addr != (void*)segment_base) {
                     ERROR("Failed to allocate memory at requested address for segment in file %s", path.c_str());
@@ -590,7 +590,7 @@ void Elf::Load(const std::filesystem::path& path) {
                     size_t excess_size = bss_page_end - bss_page_start;
                     void* bss_excess =
                         g_mapper->map(is32bit, (void*)bss_page_start, excess_size, prot, MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0);
-                    if (bss_excess == MAP_FAILED) {
+                    if ((i64)bss_excess < 0) {
                         ERROR("Failed to allocate memory for BSS in file %s", path.c_str());
                     }
 

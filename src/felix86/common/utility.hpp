@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <filesystem>
@@ -10,6 +11,10 @@
 #include "biscuit/isa.hpp"
 #include "felix86/common/types.hpp"
 #include "felix86/common/xsave.hpp"
+
+[[nodiscard]] inline ssize_t libc_result(ssize_t result) {
+    return result == -1 ? -errno : result;
+}
 
 [[nodiscard]] constexpr bool IsValidBTypeImm(ptrdiff_t value) {
     return value >= -4096 && value <= 4095;
