@@ -2565,6 +2565,10 @@ void felix86_syscall32(felix86_frame* frame, u32 rip_next) {
             }
             break;
         }
+        case felix86_x86_32_lseek: {
+            result = ::lseek((int)arg1, (i32)arg2, (int)arg3);
+            break;
+        }
         case felix86_x86_32_llseek: {
             int fd = arg1;
             u64 offset_high = arg2;
