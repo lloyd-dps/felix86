@@ -92,8 +92,8 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
             return ::syscall(SYS_semctl, semid, semnum, semcmd, nullptr);
         }
         default: {
-            ERROR("Unknown SEMCTL operation: %lu", semcmd);
-            return -ENOSYS;
+            WARN("Unknown SEMCTL operation: %lu", semcmd);
+            return -EINVAL;
         }
         }
         break;
@@ -171,8 +171,8 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
         case IPC_RMID:
             return ::syscall(SYS_shmctl, shmid, cmd, nullptr);
         default: {
-            ERROR("Unknown SHMCTL operation: %d", cmd);
-            return 0;
+            WARN("Unknown SHMCTL operation: %d", cmd);
+            return -EINVAL;
         }
         }
         break;
@@ -197,8 +197,8 @@ int ipc32(u32 call, u32 first, u64 second, u64 third, void* ptr, u64 fifth) {
         return ::syscall(SYS_msgget, first, second);
     }
     default: {
-        ERROR("Unknown IPC operation: %d", operation);
-        return 0;
+        WARN("Unknown IPC operation: %d", operation);
+        return -ENOSYS;
     }
     }
 }
