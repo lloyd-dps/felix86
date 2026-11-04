@@ -83,6 +83,38 @@
 #define SO_PEERPIDFD 77
 #endif
 
+static void cmsgs_to_guest(msghdr& host_msghdr, x86_msghdr& guest_msghdr) {
+    size_t guest_used = 0;
+    for (cmsghdr* host_cmsghdr = CMSG_FIRSTHDR(&host_msghdr); host_cmsghdr != nullptr; host_cmsghdr = CMSG_NXTHDR(&host_msghdr, host_cmsghdr)) {
+        size_t guest_left = guest_msghdr.msg_controllen - guest_used;
+        size_t data_len = host_cmsghdr->cmsg_len - CMSG_LEN(0);
+        size_t copied = guest_left < sizeof(x86_cmsghdr) ? 0 : std::min(data_len, guest_left - sizeof(x86_cmsghdr));
+        bool is_rights = host_cmsghdr->cmsg_level == SOL_SOCKET && host_cmsghdr->cmsg_type == SCM_RIGHTS;
+        if (is_rights) {
+            copied &= ~(sizeof(int) - 1);
+            for (size_t i = copied; i + sizeof(int) <= data_len; i += sizeof(int)) {
+                int dropped_fd;
+                memcpy(&dropped_fd, CMSG_DATA(host_cmsghdr) + i, sizeof(int));
+                close(dropped_fd);
+            }
+        }
+        if (copied < data_len) {
+            guest_msghdr.msg_flags |= MSG_CTRUNC;
+        }
+        if (guest_left < sizeof(x86_cmsghdr) || (is_rights && copied == 0)) {
+            continue;
+        }
+
+        x86_cmsghdr* guest_cmsghdr = (x86_cmsghdr*)(u64)(guest_msghdr.msg_control + guest_used);
+        guest_cmsghdr->cmsg_len = sizeof(x86_cmsghdr) + copied;
+        guest_cmsghdr->cmsg_level = host_cmsghdr->cmsg_level;
+        guest_cmsghdr->cmsg_type = host_cmsghdr->cmsg_type;
+        memcpy(guest_cmsghdr->cmsg_data, CMSG_DATA(host_cmsghdr), copied);
+        guest_used += std::min<size_t>((guest_cmsghdr->cmsg_len + 3) & ~3u, guest_left);
+    }
+    guest_msghdr.msg_controllen = guest_used;
+}
+
 int recvmsg32(int fd, x86_msghdr* guest_msghdr, int flags) {
     struct msghdr host_msghdr;
     host_msghdr.msg_flags = guest_msghdr->msg_flags;
@@ -94,7 +126,6 @@ int recvmsg32(int fd, x86_msghdr* guest_msghdr, int flags) {
     host_msghdr.msg_iov = iovecs.data();
     host_msghdr.msg_iovlen = guest_msghdr->msg_iovlen;
 
-    constexpr size_t cmsghdr_size_difference = sizeof(cmsghdr) - sizeof(x86_cmsghdr);
     host_msghdr.msg_control = alloca(guest_msghdr->msg_controllen * 2);
     host_msghdr.msg_controllen = guest_msghdr->msg_controllen * 2;
 
@@ -106,29 +137,34 @@ int recvmsg32(int fd, x86_msghdr* guest_msghdr, int flags) {
         }
 
         guest_msghdr->msg_namelen = host_msghdr.msg_namelen;
-        guest_msghdr->msg_controllen = 0;
         guest_msghdr->msg_flags = host_msghdr.msg_flags;
-
-        if (host_msghdr.msg_controllen != 0) {
-            u64 guest_cmsghdr_pointer = guest_msghdr->msg_control;
-
-            for (cmsghdr* host_cmsghdr = CMSG_FIRSTHDR(&host_msghdr); host_cmsghdr != nullptr;
-                 host_cmsghdr = CMSG_NXTHDR(&host_msghdr, host_cmsghdr)) {
-                x86_cmsghdr* guest_cmsghdr = (x86_cmsghdr*)guest_cmsghdr_pointer;
-                guest_cmsghdr->cmsg_level = host_cmsghdr->cmsg_level;
-                guest_cmsghdr->cmsg_type = host_cmsghdr->cmsg_type;
-
-                if (host_cmsghdr->cmsg_len != 0) {
-                    guest_cmsghdr->cmsg_len = host_cmsghdr->cmsg_len - cmsghdr_size_difference;
-                    guest_msghdr->msg_controllen += guest_cmsghdr->cmsg_len;
-                    memcpy(guest_cmsghdr->cmsg_data, CMSG_DATA(host_cmsghdr), host_cmsghdr->cmsg_len - sizeof(cmsghdr));
-                    guest_cmsghdr_pointer += guest_cmsghdr->cmsg_len;
-                    guest_cmsghdr_pointer = (guest_cmsghdr_pointer + 3) & ~0b11ull;
-                }
-            }
-        }
+        cmsgs_to_guest(host_msghdr, *guest_msghdr);
     }
     return result;
+}
+
+static int cmsgs_to_host(const x86_msghdr& guest_msghdr, msghdr& host_msghdr) {
+    u8* guest_control = (u8*)(u64)guest_msghdr.msg_control;
+    size_t guest_offset = 0;
+    u8* host_ptr = (u8*)host_msghdr.msg_control;
+    while (guest_offset < guest_msghdr.msg_controllen) {
+        size_t guest_left = guest_msghdr.msg_controllen - guest_offset;
+        x86_cmsghdr* guest_cmsghdr = (x86_cmsghdr*)(guest_control + guest_offset);
+        if (guest_left < sizeof(x86_cmsghdr) || guest_cmsghdr->cmsg_len < sizeof(x86_cmsghdr) || guest_cmsghdr->cmsg_len > guest_left) {
+            return -EINVAL;
+        }
+
+        size_t data_len = guest_cmsghdr->cmsg_len - sizeof(x86_cmsghdr);
+        cmsghdr* host_cmsghdr = (cmsghdr*)host_ptr;
+        host_cmsghdr->cmsg_len = CMSG_LEN(data_len);
+        host_cmsghdr->cmsg_level = guest_cmsghdr->cmsg_level;
+        host_cmsghdr->cmsg_type = guest_cmsghdr->cmsg_type;
+        memcpy(CMSG_DATA(host_cmsghdr), guest_cmsghdr->cmsg_data, data_len);
+        host_ptr += CMSG_SPACE(data_len);
+        guest_offset += (guest_cmsghdr->cmsg_len + 3) & ~3u;
+    }
+    host_msghdr.msg_controllen = host_ptr - (u8*)host_msghdr.msg_control;
+    return 0;
 }
 
 int sendmsg32(int fd, const x86_msghdr* guest_msghdr, int flags) {
@@ -142,40 +178,10 @@ int sendmsg32(int fd, const x86_msghdr* guest_msghdr, int flags) {
     host_msghdr.msg_iov = iovecs.data();
     host_msghdr.msg_iovlen = guest_msghdr->msg_iovlen;
 
-    constexpr size_t cmsghdr_size_difference = sizeof(cmsghdr) - sizeof(x86_cmsghdr);
     host_msghdr.msg_control = alloca(guest_msghdr->msg_controllen * 2);
-    host_msghdr.msg_controllen = guest_msghdr->msg_controllen;
-
-    if (guest_msghdr->msg_controllen != 0) {
-        u64 guest_cmsghdr_pointer = guest_msghdr->msg_control;
-        u64 host_cmsghdr_pointer = (u64)host_msghdr.msg_control;
-
-        while (true) {
-            x86_cmsghdr* guest_cmsghdr = (x86_cmsghdr*)guest_cmsghdr_pointer;
-            cmsghdr* host_cmsghdr = (cmsghdr*)host_cmsghdr_pointer;
-
-            host_cmsghdr->cmsg_level = guest_cmsghdr->cmsg_level;
-            host_cmsghdr->cmsg_type = guest_cmsghdr->cmsg_type;
-
-            if (guest_cmsghdr->cmsg_len) {
-                host_cmsghdr->cmsg_len = guest_cmsghdr->cmsg_len + cmsghdr_size_difference;
-                host_msghdr.msg_controllen += cmsghdr_size_difference;
-                memcpy(CMSG_DATA(host_cmsghdr), guest_cmsghdr->cmsg_data, guest_cmsghdr->cmsg_len - sizeof(x86_cmsghdr));
-            }
-
-            host_cmsghdr_pointer = (u64)CMSG_NXTHDR(&host_msghdr, host_cmsghdr);
-
-            if (guest_cmsghdr->cmsg_len < sizeof(x86_cmsghdr)) {
-                break;
-            } else {
-                guest_cmsghdr_pointer += guest_cmsghdr->cmsg_len;
-                guest_cmsghdr_pointer = (guest_cmsghdr_pointer + 3) & ~0b11ull;
-
-                if (guest_cmsghdr_pointer >= guest_msghdr->msg_control + guest_msghdr->msg_controllen) {
-                    break;
-                }
-            }
-        }
+    int result = cmsgs_to_host(*guest_msghdr, host_msghdr);
+    if (result != 0) {
+        return result;
     }
 
     return ::sendmsg(fd, &host_msghdr, flags);
@@ -209,7 +215,7 @@ int recvmmsg32(int fd, x86_mmsghdr* messages, u32 n, int flags, x86_timespec* ti
 
         host_msghdr.msg_name = (void*)(u64)guest_msghdr.msg_name;
         host_msghdr.msg_namelen = guest_msghdr.msg_namelen;
-        host_msghdr.msg_iov = &host_iovecs[size];
+        host_msghdr.msg_iov = host_iovecs.data() + size;
         host_msghdr.msg_iovlen = guest_msghdr.msg_iovlen;
         host_msghdr.msg_control = alloca(guest_msghdr.msg_controllen * 2);
         host_msghdr.msg_controllen = guest_msghdr.msg_controllen * 2;
@@ -229,25 +235,8 @@ int recvmmsg32(int fd, x86_mmsghdr* messages, u32 n, int flags, x86_timespec* ti
             }
 
             guest_msghdr.msg_namelen = host_msghdr.msg_namelen;
-            guest_msghdr.msg_controllen = host_msghdr.msg_controllen;
             guest_msghdr.msg_flags = host_msghdr.msg_flags;
-
-            if (host_msghdr.msg_controllen) {
-                x86_cmsghdr* current_guest_cmsghdr = (x86_cmsghdr*)(u64)guest_msghdr.msg_control;
-                for (struct cmsghdr* cmsg = CMSG_FIRSTHDR(&host_msghdr); cmsg != nullptr; cmsg = CMSG_NXTHDR(&host_msghdr, cmsg)) {
-                    current_guest_cmsghdr->cmsg_level = cmsg->cmsg_level;
-                    current_guest_cmsghdr->cmsg_type = cmsg->cmsg_type;
-
-                    if (cmsg->cmsg_len) {
-                        size_t size_increase = (CMSG_LEN(0) - sizeof(x86_cmsghdr));
-                        current_guest_cmsghdr->cmsg_len = cmsg->cmsg_len - size_increase;
-                        guest_msghdr.msg_controllen -= size_increase;
-
-                        memcpy(current_guest_cmsghdr->cmsg_data, CMSG_DATA(cmsg), cmsg->cmsg_len - sizeof(struct cmsghdr));
-                        current_guest_cmsghdr = (x86_cmsghdr*)((((u64)current_guest_cmsghdr + current_guest_cmsghdr->cmsg_len) + 3) & ~3ull);
-                    }
-                }
-            }
+            cmsgs_to_guest(host_msghdr, guest_msghdr);
             messages[i].msg_len = host_mmsgs[i].msg_len;
         }
     }
@@ -284,38 +273,20 @@ int sendmmsg32(int fd, x86_mmsghdr* messages, u32 n, int flags) {
         host_msghdr.msg_namelen = guest_msghdr.msg_namelen;
         host_msghdr.msg_controllen = guest_msghdr.msg_controllen;
         host_msghdr.msg_flags = guest_msghdr.msg_flags;
-        host_msghdr.msg_iov = &host_iovecs.at(current_iov);
+        host_msghdr.msg_iov = host_iovecs.data() + current_iov;
         host_msghdr.msg_iovlen = guest_msghdr.msg_iovlen;
         current_iov += host_msghdr.msg_iovlen;
 
         if (guest_msghdr.msg_controllen) {
             host_msghdr.msg_control = &buffer.at(current_controllen_offset);
             current_controllen_offset += guest_msghdr.msg_controllen * 2;
-
-            x86_cmsghdr* current_guest_cmsghdr = (x86_cmsghdr*)(u64)guest_msghdr.msg_control;
-            struct cmsghdr* current_host_cmsghdr = (cmsghdr*)host_msghdr.msg_control;
-
-            while (current_guest_cmsghdr != nullptr) {
-                current_host_cmsghdr->cmsg_level = current_guest_cmsghdr->cmsg_level;
-                current_host_cmsghdr->cmsg_type = current_guest_cmsghdr->cmsg_type;
-
-                if (current_guest_cmsghdr->cmsg_len) {
-                    size_t size_increase = (CMSG_LEN(0) - sizeof(x86_cmsghdr));
-                    current_host_cmsghdr->cmsg_len = current_guest_cmsghdr->cmsg_len + size_increase;
-                    host_msghdr.msg_controllen += size_increase;
-                    memcpy(CMSG_DATA(current_host_cmsghdr), current_guest_cmsghdr->cmsg_data, current_guest_cmsghdr->cmsg_len - sizeof(x86_cmsghdr));
+            int result = cmsgs_to_host(guest_msghdr, host_msghdr);
+            if (result != 0) {
+                if (i == 0) {
+                    return result;
                 }
-
-                current_host_cmsghdr = CMSG_NXTHDR(&host_msghdr, current_host_cmsghdr);
-
-                if (current_guest_cmsghdr->cmsg_len < sizeof(x86_cmsghdr)) {
-                    current_guest_cmsghdr = nullptr;
-                } else {
-                    current_guest_cmsghdr = (x86_cmsghdr*)((((u64)current_guest_cmsghdr + current_guest_cmsghdr->cmsg_len) + 3) & ~3ull);
-                    if ((u64)current_guest_cmsghdr >= (u64)guest_msghdr.msg_control + guest_msghdr.msg_controllen) {
-                        current_guest_cmsghdr = nullptr;
-                    }
-                }
+                n = i;
+                break;
             }
         }
     }
